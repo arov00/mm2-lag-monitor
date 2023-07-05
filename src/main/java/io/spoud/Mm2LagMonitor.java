@@ -18,21 +18,13 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.extern.jackson.Jacksonized;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.mirror.DefaultReplicationPolicy;
-import org.apache.kafka.connect.mirror.ReplicationPolicy;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.reactive.messaging.*;
 
 import jakarta.enterprise.context.ApplicationScoped;
 
-import java.io.File;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 import java.util.regex.Pattern;
 
 @Startup
@@ -41,25 +33,11 @@ public class Mm2LagMonitor {
     private static final ObjectMapper mapper = new ObjectMapper();
     private final ConcurrentHashMap<String, Long> mm2Offsets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> logEndOffsets = new ConcurrentHashMap<>();
-    private ReplicationPolicy replicationPolicy;
-    private MeterRegistry registry;
+    private final MeterRegistry registry;
 
-    public Mm2LagMonitor(@ConfigProperty(name = "replication.policy.jar", defaultValue = "") String replicationPolicyJar,
-                         MeterRegistry registry) {
+    public Mm2LagMonitor(MeterRegistry registry) {
         Log.info("Starting mm2 lag monitor");
         this.registry = registry;
-        if (replicationPolicyJar.isBlank()) {
-            Log.info("Using default replication policy");
-            replicationPolicy = new DefaultReplicationPolicy();
-        } else {
-            Log.info("Loading replication policy from %s".formatted(replicationPolicyJar));
-            try {
-                replicationPolicy = getReplicationPolicy(new File(replicationPolicyJar));
-            } catch (Exception ex) {
-                Log.error("Error loading replication policy from %s".formatted(replicationPolicyJar), ex);
-                Quarkus.blockingExit();
-            }
-        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -117,48 +95,23 @@ public class Mm2LagMonitor {
         }
     }
 
-    private String getOldTopicName(String topic) {
-        return replicationPolicy.originalTopic(topic);
-    }
-
     private void updateLogEndOffsets(String topic, int partition) {
-        var finalTopic = getOldTopicName(topic);
         var consumer = kafkaClientService.getConsumer("replicated");
-        var relevantPartition = new TopicPartition(finalTopic, partition);
+        var relevantPartition = new TopicPartition(topic, partition);
         consumer.runOnPollingThread(rawConsumer -> {
             rawConsumer.assign(List.of(relevantPartition));
             rawConsumer.seekToEnd(List.of(relevantPartition));
             var logEndOffset = rawConsumer.position(relevantPartition);
             logEndOffsets.put(topic + "-" + partition, logEndOffset);
-            Log.info("Updating log end offset for %s-%s: %s".formatted(finalTopic, partition, logEndOffset));
+            Log.info("Updating log end offset for %s-%s: %s".formatted(topic, partition, logEndOffset));
             registry.gauge("mm2_source_offsets",
                 List.of(
                     new ImmutableTag("topic", topic), // we do not want to use the old topic name here, so that it is easier to associate the offsets of the old and new topic
                     new ImmutableTag("partition", Integer.toString(partition))),
                 logEndOffsets,
-                (map) -> map.get(finalTopic + "-" + partition));
+                (map) -> map.get(topic + "-" + partition));
         }).subscribe().with(
             (x) -> {},
-            (e) -> Log.error("Error updating log end offset for %s-%s".formatted(finalTopic, partition), e));
-    }
-
-    public static ReplicationPolicy getReplicationPolicy(File jarFile) throws Exception {
-        try (JarFile file = new JarFile(jarFile)) {
-            URL jarURL = jarFile.toURI().toURL();
-            URLClassLoader classLoader = new URLClassLoader(new URL[]{jarURL}, ReplicationPolicy.class.getClassLoader());
-
-            for (JarEntry entry : Collections.list(file.entries())) {
-                if (entry.getName().endsWith(".class")) {
-                    String className = entry.getName().replace("/", ".").replaceAll("\\.class$", "");
-                    Class<?> loadedClass = classLoader.loadClass(className);
-
-                    if (ReplicationPolicy.class.isAssignableFrom(loadedClass)) {
-                        return (ReplicationPolicy) loadedClass.getDeclaredConstructor().newInstance();
-                    }
-                }
-            }
-        }
-
-        return null;
+            (e) -> Log.error("Error updating log end offset for %s-%s".formatted(topic, partition), e));
     }
 }

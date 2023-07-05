@@ -1,8 +1,32 @@
 # mm2-lag-monitor
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+This little app monitors the lag of mirror maker 2 and exposes the metrics to Prometheus.
+Specifically, the app exposes the following metrics:
 
-If you want to learn more about Quarkus, please visit its website: https://quarkus.io/ .
+```
+mm2_source_offsets{cluster="<source alias>",topic="<topic name>",partition="<partition number>"}
+mm2_target_offsets{cluster="<target alias>",topic="<topic name>",partition="<partition number>"}
+```
+
+The former metric is the log end offset of the topic partition on the source cluster.
+The latter metric is the offset that MM2 has committed to the `mm2-offsets...` internal topic on the target cluster.
+The difference between the two is a rather accurate approximation of the lag of MM2.
+The app samples these metrics whenever MM2 produces new offsets to the `mm2-offsets...` topic.
+
+The metrics are exposed in the Prometheus format on port 8080 under the `/q/metrics` path.
+Use the following query to get the lag of all partitions of all topics:
+
+```
+mm2_source_offsets -on(topic, partition) mm2_target_offsets
+```
+
+In order for the app to work, you need to set the following environment variables:
+
+```
+MP_MESSAGING_INCOMING_MM2_BOOTSTRAP_SERVERS=<target cluster bootstrap servers>
+MP_MESSAGING_INCOMING_REPLICATED_BOOTSTRAP_SERVERS=<source cluster bootstrap servers>
+MP_MESSAGING_INCOMING_MM2_TOPIC=<mm2-offsets... topic name on the target cluster>
+```
 
 ## Running the application in dev mode
 
