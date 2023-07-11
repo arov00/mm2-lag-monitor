@@ -70,6 +70,7 @@ public class Mm2LagMonitor {
     @Blocking
     @Incoming("mm2")
     public void handleOffsetUpdate(Record<String, String> record) {
+        Log.info("Received offset update: %s -> %s".formatted(record.key(), record.value()));
         try {
             var keyJson = record.key()
                 .replaceAll(Pattern.quote("["), "{")
