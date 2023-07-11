@@ -28,6 +28,10 @@ MP_MESSAGING_INCOMING_REPLICATED_BOOTSTRAP_SERVERS=<source cluster bootstrap ser
 MP_MESSAGING_INCOMING_MM2_TOPIC=<mm2-offsets... topic name on the target cluster>
 ```
 
+The app also computes the log end offsets of partitions that are being replicated by mm2
+in regular intervals. This interval is configurable via the `LOG_END_OFFSET_UPDATE_INTERVAL_SECONDS` environment variable.
+The default value is 30 seconds.
+
 ## Running the application in dev mode
 
 You can run your application in dev mode that enables live coding using:
